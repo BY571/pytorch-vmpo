@@ -14,6 +14,7 @@ def main(cfg : DictConfig) -> None:
                     group=cfg.wandb.group,
                     tags=cfg.wandb.tags,
                     notes=cfg.wandb.notes,
+                    mode=cfg.wandb.mode,
                     monitor_gym=cfg.wandb.monitor_gym):
         trainer.train(wandb=wandb)
 

@@ -1,6 +1,19 @@
+# PyTorch implementation of v-MPO
+
+# Setup
+
+# Run
+
+`python src/main.py`
+
+# Results
+### CartPole-v1 
+![altext](/imgs/cp_v1.png)
+
+
 # TODO
-- add continuous actor
-- clear code
+- clear code / config
+- test conti actor
 - add vec environment
 - test mujoco
 - check google parameter

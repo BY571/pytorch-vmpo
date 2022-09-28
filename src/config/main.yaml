@@ -15,7 +15,7 @@ wandb:
   monitor_gym: null
 
 common:
-  env_name: "HalfCheetah-v2"
+  env_name: "CartPole-v0"
   epochs: 1000
   max_steps_per_epoch: 1000
   eval_every: 1
