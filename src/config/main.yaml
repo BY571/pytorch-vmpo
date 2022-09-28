@@ -1,0 +1,26 @@
+defaults:
+  - _self_
+  - actor_critic: deterministic
+  # - env: default
+
+
+wandb:
+  mode: offline
+  project: v-mpo
+  entity: null
+  name: null
+  group: null
+  tags: null
+  notes: null
+  monitor_gym: null
+
+common:
+  env_name: "HalfCheetah-v2"
+  epochs: 1000
+  max_steps_per_epoch: 1000
+  eval_every: 1
+  eval_runs: 1
+  device: cuda:0
+  do_checkpoint: True
+  seed: 0
+  gamma: 0.99
