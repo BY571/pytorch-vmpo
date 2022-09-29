@@ -49,32 +49,47 @@ class Trainer():
         self.gamma = config.common.gamma
         self.K_epochs = 8
 
-        self.eps_eta = torch.FloatTensor([0.01]).to(config.common.device)
-        # for discrete
-        self.eps_alpha = torch.FloatTensor([0.001, 0.01]).to(config.common.device).log()
-        # for continuous    
-        self.eps_alpha_mean = torch.FloatTensor([0.05, 0.5]).to(config.common.device).log()
-        self.eps_alpha_sigma= torch.FloatTensor([1e-5, 5e-5]).to(config.common.device).log()
-        
         self.train_env, self.test_env, obs_space, act_space = self.get_env(config.common.env_name,
                                                                            device=self.config.common.device)
         
-        self.eta = torch.tensor([1.0], requires_grad=True)#.to(config.common.device)
-        self.alpha = torch.tensor([0.1], requires_grad=True)#.to(config.common.device)
+        self.set_eta_alpha(act_space, config)
+
         self.policy, self.old_policy = self.get_policies(obs_space, act_space)
                 
         self.policy.to(config.common.device)
         self.old_policy.to(config.common.device)
         
-        params = [{'params': self.policy.parameters()},
-                  {'params': self.eta},
-                  {'params': self.alpha}]
-        
+        if type(act_space) == gym.spaces.discrete.Discrete:
+            params = [{'params': self.policy.parameters()},
+                    {'params': self.eta},
+                    {'params': self.alpha}]
+        else:
+            params = [{'params': self.policy.parameters()},
+                    {'params': self.eta},
+                    {'params': self.alpha_mean},
+                    {'params': self.alpha_sig}]
+
         self.set_update(act_space=act_space)
         self.optimizer = torch.optim.Adam(params, lr=1e-4)
         self.mseloss = nn.MSELoss()
         self.memory = Memory()
     
+    def set_eta_alpha(self, action_space: gym.spaces, config: dict)-> None:
+        if type(action_space) == gym.spaces.discrete.Discrete:
+            self.alpha = torch.tensor([config.discrete.init_alpha], requires_grad=True)
+            self.eps_alpha = torch.FloatTensor(config.discrete.eps_alpha).to(config.common.device).log()
+            
+            self.eta = torch.tensor([config.discrete.init_eta], requires_grad=True)
+            self.eps_eta = torch.FloatTensor([config.discrete.eps_eta]).to(config.common.device)
+        else:
+            self.alpha_mean = torch.tensor([config.continuous.init_alpha_mean], requires_grad=True)
+            self.alpha_sig = torch.tensor([config.continuous.init_alpha_sig], requires_grad=True)
+            self.eps_alpha_mean = torch.FloatTensor(config.continuous.eps_alpha_mean).to(config.common.device).log()
+            self.eps_alpha_sigma= torch.FloatTensor(config.continuous.eps_alpha_sig).to(config.common.device).log()
+            
+            self.eta = torch.tensor([config.discrete.init_eta], requires_grad=True)
+            self.eps_eta = torch.FloatTensor([config.discrete.eps_eta]).to(config.common.device)
+
     @staticmethod
     def get_env(env_name: str, device: str): # -> Tuple[Env, Env, gym.spaces, gym.spaces]:
         train_env = TorchWrapper(gym.make(env_name), device=device)
@@ -214,15 +229,17 @@ class Trainer():
             
             # Get losses
             phis = torch.exp(good_advantages/self.eta.detach().to(self.config.common.device))/torch.sum(torch.exp(good_advantages/self.eta.detach().to(self.config.common.device)))
-            loss_pi = -phis * good_logprobs
+            loss_pi = (-phis * good_logprobs).mean()
             loss_eta = self.eta.to(self.config.common.device) * self.eps_eta + self.eta.to(self.config.common.device) * (good_advantages/self.eta.to(self.config.common.device)).exp().mean().log()
             
             kl = self.get_KL(old_dist_probs.detach(),torch.log(old_dist_probs).detach(),torch.log(dist_probs))
             
             coef_alpha = torch.distributions.Uniform(self.eps_alpha[0], self.eps_alpha[1]).sample().exp()
             loss_alpha = torch.mean(self.alpha.to(self.config.common.device) * (coef_alpha - kl.detach()) + self.alpha.detach().to(self.config.common.device) * kl)
-        
-            loss = (loss_pi + loss_eta + loss_alpha + 0.5 * self.mseloss(state_values, norm_disc_reward)).mean()
+
+            value_loss = self.mseloss(state_values, norm_disc_reward)
+            
+            loss = (loss_pi + loss_eta + loss_alpha + 0.5 * value_loss).mean()
 
             # take gradient step
             self.optimizer.zero_grad()
@@ -235,7 +252,12 @@ class Trainer():
         
         # Copy new weights into old policy:
         self.old_policy.load_state_dict(self.policy.state_dict())
-        loss_dict = {"loss": loss.item(), "kl": kl.mean().item(), "alpha": self.alpha.item()}
+        loss_dict = {"loss": loss.item(),
+                     "policy_loss": loss_pi.item(),
+                     "loss_eta": loss_eta.item(),
+                     "kl": kl.mean().item(),
+                     "alpha": self.alpha.item(),
+                     "alpa_loss": loss_alpha.item()}
         return loss_dict
 
     def update_continuous(self, ):
@@ -255,18 +277,19 @@ class Trainer():
                 
                 # Get losses
                 phis = torch.exp(good_advantages/self.eta.detach().to(self.config.common.device))/torch.sum(torch.exp(good_advantages/self.eta.detach().to(self.config.common.device)))
-                loss_pi = -phis * good_logprobs
+                loss_pi = (-phis * good_logprobs).mean()
                 loss_eta = self.eta.to(self.config.common.device) * self.eps_eta + self.eta.to(self.config.common.device) * (good_advantages/self.eta.to(self.config.common.device)).exp().mean().log()
                 
                 kl_mean, kl_sigma = self.get_conti_kl(mean, mean_old, sigma, sigma_old)
                 
-                
                 coef_alpha_mean = torch.distributions.Uniform(self.eps_alpha_mean[0], self.eps_alpha_mean[1]).sample().exp()
                 coef_alpha_sigma = torch.distributions.Uniform(self.eps_alpha_sigma[0], self.eps_alpha_sigma[1]).sample().exp()
-                loss_alpha_mean = torch.mean(self.alpha.to(self.config.common.device) * (coef_alpha_mean - kl_mean.detach()) + self.alpha.detach().to(self.config.common.device) * kl_mean)
-                loss_alpha_sigma = torch.mean(self.alpha.to(self.config.common.device) * (coef_alpha_sigma - kl_sigma.detach()) + self.alpha.detach().to(self.config.common.device) * kl_sigma)
-            
-                loss = (loss_pi + loss_eta + loss_alpha_mean + loss_alpha_sigma + 0.5 * self.mseloss(state_values, norm_disc_reward)).mean()
+                loss_alpha_mean = torch.mean(self.alpha_mean.to(self.config.common.device) * (coef_alpha_mean - kl_mean.detach()) + self.alpha_mean.detach().to(self.config.common.device) * kl_mean)
+                loss_alpha_sigma = torch.mean(self.alpha_sig.to(self.config.common.device) * (coef_alpha_sigma - kl_sigma.detach()) + self.alpha_sig.detach().to(self.config.common.device) * kl_sigma)
+
+                value_loss = self.mseloss(state_values, norm_disc_reward)
+                
+                loss = (loss_pi + loss_eta + loss_alpha_mean + loss_alpha_sigma + 0.5 * value_loss).mean()
 
                 # take gradient step
                 self.optimizer.zero_grad()
@@ -275,14 +298,21 @@ class Trainer():
                 self.update_steps += 1
                 with torch.no_grad():
                     self.eta.copy_(torch.clamp(self.eta, min=1e-8))
-                    self.alpha.copy_(torch.clamp(self.alpha, min=1e-8))
+                    self.alpha_mean.copy_(torch.clamp(self.alpha_mean, min=1e-8))
+                    self.alpha_sig.copy_(torch.clamp(self.alpha_sig, min=1e-8))
             
             # Copy new weights into old policy:
             self.old_policy.load_state_dict(self.policy.state_dict())
             loss_dict = {"loss": loss.item(),
+                         "policy_loss": loss_pi.item(),
+                         "value_loss (w/o coeff: 0.5)": value_loss.item(),
+                         "eta_loss": loss_eta.item(),
                          "kl_mean": kl_mean.mean().item(),
                          "kl_sigma": kl_sigma.mean().item(),
-                         "alpha":self.alpha.item()}
+                         "alpha_mean_loss": loss_alpha_mean.item(),
+                         "alpha_sig_loss": loss_alpha_sigma.item(),
+                         "alpha_mean":self.alpha_mean.item(),
+                         "alpha_sig":self.alpha_sig.item()}
             return loss_dict
 
     def train(self, wandb):

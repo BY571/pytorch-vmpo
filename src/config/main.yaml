@@ -1,22 +1,16 @@
-defaults:
-  - _self_
-  - actor_critic: deterministic
-  # - env: default
-
-
 wandb:
-  mode: offline
+  mode: online
   project: v-mpo
   entity: null
-  name: null
+  name: debug-CP-conti
   group: null
   tags: null
   notes: null
   monitor_gym: null
 
 common:
-  env_name: "CartPole-v0"
-  epochs: 1000
+  env_name: "CartPoleSwingUp-v0"
+  epochs: 600
   max_steps_per_epoch: 1000
   eval_every: 1
   eval_runs: 1
@@ -24,3 +18,25 @@ common:
   do_checkpoint: True
   seed: 0
   gamma: 0.99
+
+# For exact hyperparameter - Paper:
+# https://arxiv.org/pdf/1909.12238.pdf
+
+discrete:
+  init_alpha: 5.0
+  eps_alpha: [0.001, 0.01]
+  init_eta: 1.0
+  eps_eta: 0.01 # for openai gym: 0.01 - for pixel input 0.1
+
+continuous:
+  init_alpha_mean: 1.0  # some sort of start value to define randomness of action / exploration. high more random
+  eps_alpha_mean: [0.005, 0.1] # has worked for CPswingup: [0.05, 0.5]   paper: [0.005, 0.01]
+  init_alpha_sig: 1.0
+  eps_alpha_sig: [5.0e-6, 5.0e-5] #has worked for CPswingup: [1.0e-5, 5.0e-5]    paper: [5.0e-6, 5.0e-5]
+  init_eta: 1.0
+  eps_eta: 0.1 # for openai gym: 0.01 - for pixel input 0.1
+
+# defaults:
+#   - _self_
+#   - actor_critic: deterministic
+#   - env: default
